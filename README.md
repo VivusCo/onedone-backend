@@ -23,8 +23,11 @@ Notes:
   - `supabase/migrations/20260522004500_add_rls_policies_and_triggers.sql`
 - Starter onboarding completion field is included in:
   - `supabase/migrations/20260522013000_add_onboarding_completed_at_to_profiles.sql`
-- Edge Functions currently include starter access state endpoints only:
+- Analyze task scaffold support is included in:
+  - `supabase/migrations/20260522023000_add_analyze_task_scaffold_support.sql`
+- Edge Functions implemented through BE-07 include:
   - `analyze-task` (deterministic scaffold, no OpenAI)
+  - `answer-clarification` (deterministic scaffold, no OpenAI)
   - `complete-onboarding`
   - `get-access-state`
 
@@ -79,6 +82,38 @@ curl -X POST "http://127.0.0.1:54321/functions/v1/analyze-task" \
     "input_text": "Need help drafting steps to resolve a billing question",
     "selected_template": "understand_bill",
     "billing_source": "App Store"
+  }'
+```
+
+## Answer clarification scaffold (BE-07)
+
+Implemented function:
+- `answer-clarification` (`POST`)
+
+Local curl examples (placeholder tokens only):
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/answer-clarification" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "<TASK_ID_UUID>",
+    "clarification_id": "<CLARIFICATION_ID_UUID>",
+    "answer_text": "This was billed through App Store.",
+    "billing_source": "app_store"
+  }'
+```
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/answer-clarification" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "<TASK_ID_UUID>",
+    "clarification_id": "<CLARIFICATION_ID_UUID>",
+    "answer_text": "I am not sure where I was charged."
   }'
 ```
 
