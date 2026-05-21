@@ -36,6 +36,10 @@ export type AnswerClarificationAnalysis = {
   summary: string;
   current_next_step: string;
   checklist: AnswerClarificationChecklistItem[];
+  safety_note: string | null;
+  risk_level: "low" | "medium" | "high";
+  assumptions: string[];
+  missing_information: string[];
   path: "app_store_cancellation" | "helper" | "generic";
   autonomous_action: false;
 };
