@@ -17,7 +17,9 @@ Local setup:
    - `supabase stop`
 
 Notes:
-- This scaffold intentionally does not include database schema migrations yet.
+- Core database schema is included in:
+  - `supabase/migrations/20260521232500_add_core_database_schema.sql`
+- RLS policies are intentionally not included yet.
 - This scaffold intentionally does not include Edge Functions yet.
 
 ## Environment and secret handling

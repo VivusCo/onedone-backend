@@ -210,6 +210,9 @@ create table if not exists public.reminders (
   task_id uuid references public.tasks(id) on delete set null,
   user_id uuid not null references auth.users(id) on delete cascade,
   remind_at timestamptz not null,
+  ios_notification_id text,
+  local_notification_status text not null default 'not_scheduled'
+    check (local_notification_status in ('not_scheduled', 'scheduled', 'delivered', 'opened', 'canceled', 'failed')),
   status text not null default 'scheduled'
     check (status in ('scheduled', 'sent', 'canceled', 'failed')),
   channel text not null default 'push'
@@ -225,6 +228,13 @@ create index if not exists idx_reminders_user_remind_at
 create index if not exists idx_reminders_task_remind_at
   on public.reminders(task_id, remind_at)
   where task_id is not null;
+
+create index if not exists idx_reminders_ios_notification_id
+  on public.reminders(ios_notification_id)
+  where ios_notification_id is not null;
+
+create index if not exists idx_reminders_user_local_notification_status
+  on public.reminders(user_id, local_notification_status);
 
 create table if not exists public.user_notes (
   id uuid primary key default gen_random_uuid(),
