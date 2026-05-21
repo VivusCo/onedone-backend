@@ -2,6 +2,14 @@
 
 You are working on the Supabase backend only.
 
+Documentation workflow:
+- The local `/docs` files are source of truth for backend implementation tasks.
+- Before backend architecture, schema, or Edge Function work, read `docs/02_backend_spec_v6.md`.
+- Before MVP scope or build-order work, read `docs/03_mvp_implementation_plan_v2.md`.
+- Before API endpoint/request/response work, read `docs/04_api_contract.md`.
+- Before QA, validation, or review tasks, read `docs/06_test_cases.md`.
+- If a user prompt conflicts with these docs, stop implementation and ask for clarification.
+
 Tech stack:
 - Supabase
 - Postgres
