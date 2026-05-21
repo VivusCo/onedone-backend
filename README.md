@@ -24,6 +24,7 @@ Notes:
 - Starter onboarding completion field is included in:
   - `supabase/migrations/20260522013000_add_onboarding_completed_at_to_profiles.sql`
 - Edge Functions currently include starter access state endpoints only:
+  - `analyze-task` (deterministic scaffold, no OpenAI)
   - `complete-onboarding`
   - `get-access-state`
 
@@ -47,6 +48,38 @@ curl -X POST "http://127.0.0.1:54321/functions/v1/complete-onboarding" \
 curl -X GET "http://127.0.0.1:54321/functions/v1/get-access-state" \
   -H "apikey: <SUPABASE_ANON_KEY>" \
   -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
+```
+
+## Analyze task scaffold (BE-06)
+
+Implemented function:
+- `analyze-task` (`POST`)
+
+Local curl examples (placeholder tokens only):
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/analyze-task" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Idempotency-Key: <UUID_OR_UNIQUE_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_text": "I want to cancel my subscription but I am not sure where it is billed.",
+    "selected_template": "cancel_subscription"
+  }'
+```
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/analyze-task" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Idempotency-Key: <UUID_OR_UNIQUE_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "input_text": "Need help drafting steps to resolve a billing question",
+    "selected_template": "understand_bill",
+    "billing_source": "App Store"
+  }'
 ```
 
 ## Environment and secret handling
