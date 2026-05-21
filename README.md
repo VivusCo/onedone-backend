@@ -1,5 +1,25 @@
 # OneDone Backend
 
+## Supabase project scaffold (BE-01)
+
+This repository uses the standard Supabase CLI structure:
+- `supabase/config.toml`
+- `supabase/migrations/`
+- `supabase/functions/`
+
+Local setup:
+1. Install the Supabase CLI.
+2. Start local Supabase services:
+   - `supabase start`
+3. Reset local database state during development:
+   - `supabase db reset`
+4. Stop local services when done:
+   - `supabase stop`
+
+Notes:
+- This scaffold intentionally does not include database schema migrations yet.
+- This scaffold intentionally does not include Edge Functions yet.
+
 ## Environment and secret handling
 
 Local development:
