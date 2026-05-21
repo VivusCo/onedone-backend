@@ -1,6 +1,7 @@
 export type AccessState = "onboarding_required" | "starter_active" | "starter_expired";
 
 type ProfileAccessFields = {
+  onboarding_required: boolean | null;
   onboarding_completed_at: string | null;
   starter_started_at: string | null;
   starter_ends_at: string | null;
@@ -28,7 +29,7 @@ function getStarterDaysLeft(profile: ProfileAccessFields, now: Date): number {
 }
 
 function getAccessState(profile: ProfileAccessFields, now: Date): AccessState {
-  if (!profile.onboarding_completed_at) {
+  if (profile.onboarding_required !== false || !profile.onboarding_completed_at) {
     return "onboarding_required";
   }
 
@@ -56,6 +57,7 @@ export function buildAccessStateResponse(profile: ProfileAccessFields, now = new
 
   return {
     access_state: accessState,
+    onboarding_required: profile.onboarding_required !== false,
     onboarding_completed: Boolean(profile.onboarding_completed_at),
     onboarding_completed_at: profile.onboarding_completed_at,
     starter_started_at: profile.starter_started_at,
