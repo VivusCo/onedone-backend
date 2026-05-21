@@ -4,10 +4,12 @@ import { createServiceClient, requireAuthenticatedUser } from "../_shared/auth.t
 
 const STARTER_ACCESS_DAYS = 3;
 
-const PROFILE_SELECT = "id,onboarding_completed_at,starter_started_at,starter_ends_at,starter_status";
+const PROFILE_SELECT =
+  "id,onboarding_required,onboarding_completed_at,starter_started_at,starter_ends_at,starter_status";
 
 type ProfileRow = {
   id: string;
+  onboarding_required: boolean | null;
   onboarding_completed_at: string | null;
   starter_started_at: string | null;
   starter_ends_at: string | null;
@@ -84,6 +86,10 @@ Deno.serve(async (req) => {
     starterEndsAt.getTime() > now.getTime();
 
   const updates: Partial<ProfileRow> = {};
+
+  if (profile.onboarding_required !== false) {
+    updates.onboarding_required = false;
+  }
 
   if (!profile.onboarding_completed_at) {
     updates.onboarding_completed_at = nowIso;

@@ -2,10 +2,12 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { buildAccessStateResponse } from "../_shared/access_state.ts";
 import { requireAuthenticatedUser } from "../_shared/auth.ts";
 
-const PROFILE_SELECT = "id,onboarding_completed_at,starter_started_at,starter_ends_at,starter_status";
+const PROFILE_SELECT =
+  "id,onboarding_required,onboarding_completed_at,starter_started_at,starter_ends_at,starter_status";
 
 type ProfileRow = {
   id: string;
+  onboarding_required: boolean | null;
   onboarding_completed_at: string | null;
   starter_started_at: string | null;
   starter_ends_at: string | null;
@@ -50,6 +52,7 @@ Deno.serve(async (req) => {
 
   const fallbackProfile: ProfileRow = {
     id: user.id,
+    onboarding_required: true,
     onboarding_completed_at: null,
     starter_started_at: null,
     starter_ends_at: null,
