@@ -19,8 +19,35 @@ Local setup:
 Notes:
 - Core database schema is included in:
   - `supabase/migrations/20260521232500_add_core_database_schema.sql`
-- RLS policies are intentionally not included yet.
-- This scaffold intentionally does not include Edge Functions yet.
+- RLS policies and profile/update triggers are included in:
+  - `supabase/migrations/20260522004500_add_rls_policies_and_triggers.sql`
+- Starter onboarding completion field is included in:
+  - `supabase/migrations/20260522013000_add_onboarding_completed_at_to_profiles.sql`
+- Edge Functions currently include starter access state endpoints only:
+  - `complete-onboarding`
+  - `get-access-state`
+
+## Access state functions (BE-04)
+
+Implemented functions:
+- `complete-onboarding` (`POST`)
+- `get-access-state` (`GET`)
+
+Local curl examples (placeholder tokens only):
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/complete-onboarding" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d "{}"
+```
+
+```bash
+curl -X GET "http://127.0.0.1:54321/functions/v1/get-access-state" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
+```
 
 ## Environment and secret handling
 
