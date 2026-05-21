@@ -1,9 +1,10 @@
 import { corsHeaders } from "../_shared/cors.ts";
 import { buildAccessStateResponse } from "../_shared/access_state.ts";
-import { requireAuthenticatedUser } from "../_shared/auth.ts";
+import { createServiceClient, requireAuthenticatedUser } from "../_shared/auth.ts";
 import {
   ANSWER_CLARIFICATION_MAX_LENGTH,
   ANSWER_CLARIFICATION_MIN_LENGTH,
+  type AnswerClarificationAnalysis,
   type AnswerClarificationErrorCode,
   type AnswerClarificationRequest,
   type AnswerClarificationResponse,
@@ -11,13 +12,28 @@ import {
 } from "../_shared/answer_clarification_types.ts";
 import {
   buildAppStoreCancellationAnalysis,
-  buildGenericAnalysis,
   buildHelperPathAnalysis,
   deriveBillingSource,
   isNotSureAnswer,
 } from "../_shared/answer_clarification_rules.ts";
+import {
+  AI_TASK_ANALYSIS_JSON_SCHEMA,
+  AI_TASK_PROMPT_VERSION,
+  AI_TASK_SCHEMA_VERSION,
+  parseAiTaskAnalysis,
+} from "../_shared/ai_task_analysis_schema.ts";
+import {
+  applySafetyGuardrails,
+  buildSafetyInstruction,
+  detectSensitiveCategory,
+} from "../_shared/ai_safety.ts";
+import {
+  callOpenAiStructuredJson,
+  type OpenAiUsageDetails,
+} from "../_shared/openai_client.ts";
 
 type UserClient = any;
+type ServiceClient = any;
 
 type ProfileAccessRow = {
   onboarding_required: boolean | null;
@@ -56,8 +72,20 @@ type JsonError = {
   };
 };
 
+type ProcessingError = {
+  code: AnswerClarificationErrorCode;
+  message: string;
+  retryable: boolean;
+};
+
+type AiClarificationResult = {
+  analysis: AnswerClarificationAnalysis;
+  usage: OpenAiUsageDetails;
+};
+
 const PROFILE_SELECT =
   "onboarding_required,onboarding_completed_at,starter_started_at,starter_ends_at,starter_status";
+const FUNCTION_NAME = "answer-clarification";
 
 function jsonResponse(payload: AnswerClarificationResponse | JsonError, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -82,6 +110,35 @@ function errorResponse(
     },
     status,
   );
+}
+
+function makeProcessingError(
+  code: AnswerClarificationErrorCode,
+  message: string,
+  retryable: boolean,
+): ProcessingError {
+  return { code, message, retryable };
+}
+
+function readProcessingError(error: unknown): ProcessingError {
+  if (
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    "message" in error &&
+    "retryable" in error
+  ) {
+    const candidate = error as ProcessingError;
+    if (
+      typeof candidate.code === "string" &&
+      typeof candidate.message === "string" &&
+      typeof candidate.retryable === "boolean"
+    ) {
+      return candidate;
+    }
+  }
+
+  return makeProcessingError("processing_failed", "Clarification processing failed. Please retry.", true);
 }
 
 function isLikelyUuid(value: string): boolean {
@@ -170,6 +227,112 @@ async function getAccessState(userClient: UserClient, userId: string): Promise<s
   };
 
   return buildAccessStateResponse(profile ?? fallback).access_state;
+}
+
+function buildSystemPrompt(safetyInstruction: string): string {
+  return [
+    "You are OneDone backend clarification assistant.",
+    "Return ONLY JSON matching the provided schema.",
+    "Do not include markdown or explanatory wrappers.",
+    "Produce concise and actionable steps.",
+    "Do not claim OneDone completed external actions.",
+    safetyInstruction,
+  ].join("\n");
+}
+
+function buildUserPrompt(answerText: string, billingSource: string | null): string {
+  return [
+    `Clarification answer: ${answerText}`,
+    `Billing source hint: ${billingSource ?? "unknown"}`,
+    "Create the next practical task analysis update.",
+  ].join("\n");
+}
+
+async function runAiClarificationAnalysis(params: {
+  answerText: string;
+  billingSource: string | null;
+  userId: string;
+  taskId: string;
+}): Promise<AiClarificationResult> {
+  const sensitiveCategory = detectSensitiveCategory(params.answerText);
+  const safetyInstruction = buildSafetyInstruction(sensitiveCategory);
+
+  const aiResult = await callOpenAiStructuredJson({
+    systemPrompt: buildSystemPrompt(safetyInstruction),
+    userPrompt: buildUserPrompt(params.answerText, params.billingSource),
+    schema: AI_TASK_ANALYSIS_JSON_SCHEMA,
+    safetyIdentifier: `${FUNCTION_NAME}:${params.userId}:${params.taskId}`,
+    temperature: 0.2,
+  });
+
+  if (!aiResult.ok) {
+    if (aiResult.code === "configuration_error") {
+      throw makeProcessingError("internal_error", "AI analysis is not configured for this environment.", false);
+    }
+
+    if (aiResult.code === "invalid_json") {
+      throw makeProcessingError("processing_failed", "AI response was invalid. Please retry.", true);
+    }
+
+    throw makeProcessingError("processing_failed", aiResult.message || "AI request failed. Please retry.", aiResult.retryable);
+  }
+
+  const parsed = parseAiTaskAnalysis(aiResult.content);
+  if (!parsed) {
+    throw makeProcessingError("processing_failed", "AI response could not be validated. Please retry.", true);
+  }
+
+  const guarded = applySafetyGuardrails(parsed, sensitiveCategory);
+  const analysis: AnswerClarificationAnalysis = {
+    title: guarded.title,
+    summary: guarded.summary,
+    current_next_step: guarded.current_next_step,
+    checklist: guarded.checklist,
+    safety_note: guarded.safety_note,
+    risk_level: guarded.risk_level,
+    assumptions: guarded.assumptions,
+    missing_information: guarded.missing_information,
+    path: "generic",
+    autonomous_action: false,
+  };
+
+  return {
+    analysis,
+    usage: aiResult.usage,
+  };
+}
+
+async function insertUsageEvent(params: {
+  serviceClient: ServiceClient | null;
+  userId: string;
+  taskId: string;
+  usage: OpenAiUsageDetails;
+  path: "generic" | "app_store_cancellation" | "helper";
+  sensitiveCategory: string;
+}) {
+  if (!params.serviceClient) return;
+
+  await params.serviceClient.from("usage_events").insert({
+    user_id: params.userId,
+    task_id: params.taskId,
+    event_name: "ai_answer_clarification",
+    event_category: "ai",
+    event_source: "edge_function",
+    quantity: 1,
+    properties: {
+      function_name: FUNCTION_NAME,
+      model: params.usage.model,
+      prompt_version: AI_TASK_PROMPT_VERSION,
+      schema_version: AI_TASK_SCHEMA_VERSION,
+      prompt_tokens: params.usage.prompt_tokens,
+      completion_tokens: params.usage.completion_tokens,
+      total_tokens: params.usage.total_tokens,
+      cost_usd_estimate: params.usage.cost_usd_estimate,
+      path: params.path,
+      sensitive_category: params.sensitiveCategory,
+      contains_raw_user_content: false,
+    },
+  });
 }
 
 Deno.serve(async (req) => {
@@ -279,6 +442,13 @@ Deno.serve(async (req) => {
 
   let producedOutputId: string | null = null;
 
+  let serviceClient: ServiceClient | null = null;
+  try {
+    serviceClient = createServiceClient();
+  } catch {
+    serviceClient = null;
+  }
+
   try {
     const nowIso = new Date().toISOString();
 
@@ -296,7 +466,7 @@ Deno.serve(async (req) => {
       .single<UpdatedClarificationRow>();
 
     if (clarificationUpdateError || !updatedClarification) {
-      throw new Error("Failed to update clarification");
+      throw makeProcessingError("processing_failed", "Failed to update clarification", true);
     }
 
     const { error: clarificationAnsweredEventError } = await userClient.from("task_events").insert({
@@ -307,17 +477,35 @@ Deno.serve(async (req) => {
       event_metadata: { clarification_id: clarification.id },
     });
     if (clarificationAnsweredEventError) {
-      throw new Error("Failed to create clarification answered event");
+      throw makeProcessingError("processing_failed", "Failed to create clarification answered event", true);
     }
 
     const billingSource = deriveBillingSource(payload.answer_text, payload.billing_source);
     const uncertain = isNotSureAnswer(payload.answer_text);
 
-    const analysis = billingSource === "app_store"
-      ? buildAppStoreCancellationAnalysis()
-      : uncertain
-      ? buildHelperPathAnalysis()
-      : buildGenericAnalysis(payload.answer_text);
+    let analysis: AnswerClarificationAnalysis;
+    let outputModel = "rule_based_v1";
+    let usage: OpenAiUsageDetails | null = null;
+    let promptVersion = "be08_rule_based_clarification_v1";
+    let schemaVersion = AI_TASK_SCHEMA_VERSION;
+
+    if (billingSource === "app_store") {
+      analysis = buildAppStoreCancellationAnalysis();
+    } else if (uncertain) {
+      analysis = buildHelperPathAnalysis();
+    } else {
+      const ai = await runAiClarificationAnalysis({
+        answerText: payload.answer_text,
+        billingSource,
+        userId: user.id,
+        taskId: task.id,
+      });
+      analysis = ai.analysis;
+      outputModel = ai.usage.model;
+      usage = ai.usage;
+      promptVersion = AI_TASK_PROMPT_VERSION;
+      schemaVersion = AI_TASK_SCHEMA_VERSION;
+    }
 
     await userClient
       .from("task_outputs")
@@ -333,11 +521,18 @@ Deno.serve(async (req) => {
         task_id: task.id,
         output_type: "analysis",
         is_current: true,
+        prompt_version: promptVersion,
+        schema_version: schemaVersion,
+        model: outputModel,
+        tokens_prompt: usage?.prompt_tokens ?? null,
+        tokens_completion: usage?.completion_tokens ?? null,
         content: {
           response_type: "task_analysis",
-          source: "answer_clarification",
-          deterministic: true,
-          model: "rule_based_v1",
+          source: usage ? "openai" : "answer_clarification",
+          deterministic: !usage,
+          model: outputModel,
+          prompt_version: promptVersion,
+          schema_version: schemaVersion,
           task_analysis: analysis,
         },
       })
@@ -345,7 +540,7 @@ Deno.serve(async (req) => {
       .single<TaskOutputRow>();
 
     if (outputError || !output) {
-      throw new Error("Failed to save task output");
+      throw makeProcessingError("processing_failed", "Failed to save task output", true);
     }
 
     producedOutputId = output.id;
@@ -361,7 +556,7 @@ Deno.serve(async (req) => {
     if (checklistRows.length > 0) {
       const { error: checklistError } = await userClient.from("checklist_items").insert(checklistRows);
       if (checklistError) {
-        throw new Error("Failed to create checklist items");
+        throw makeProcessingError("processing_failed", "Failed to create checklist items", true);
       }
     }
 
@@ -376,7 +571,7 @@ Deno.serve(async (req) => {
       .eq("user_id", user.id);
 
     if (taskUpdateError) {
-      throw new Error("Failed to update task state");
+      throw makeProcessingError("processing_failed", "Failed to update task state", true);
     }
 
     const { error: taskUpdatedEventError } = await userClient.from("task_events").insert({
@@ -390,7 +585,18 @@ Deno.serve(async (req) => {
       },
     });
     if (taskUpdatedEventError) {
-      throw new Error("Failed to create task updated event");
+      throw makeProcessingError("processing_failed", "Failed to create task updated event", true);
+    }
+
+    if (usage) {
+      await insertUsageEvent({
+        serviceClient,
+        userId: user.id,
+        taskId: task.id,
+        usage,
+        path: analysis.path,
+        sensitiveCategory: detectSensitiveCategory(payload.answer_text),
+      });
     }
 
     const response: AnswerClarificationSuccessResponse = {
@@ -432,7 +638,8 @@ Deno.serve(async (req) => {
       event_metadata: { retryable: true },
     });
 
-    console.error("answer-clarification error", error);
-    return errorResponse("processing_failed", "Clarification processing failed. Please retry.", 500, true);
+    const failure = readProcessingError(error);
+    const status = failure.code === "internal_error" && !failure.retryable ? 503 : 500;
+    return errorResponse(failure.code, failure.message, status, failure.retryable);
   }
 });

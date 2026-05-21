@@ -45,6 +45,10 @@ export function buildAppStoreCancellationAnalysis(): AnswerClarificationAnalysis
       { text: "Verify the subscription now shows an expiration date and save a screenshot for your records." },
       { text: "If the subscription is missing, check whether it was purchased with a different Apple ID or directly with the provider." },
     ],
+    safety_note: "OneDone guides the steps. It does not cancel subscriptions on your behalf.",
+    risk_level: "low",
+    assumptions: [],
+    missing_information: [],
     path: "app_store_cancellation",
     autonomous_action: false,
   };
@@ -61,6 +65,10 @@ export function buildHelperPathAnalysis(): AnswerClarificationAnalysis {
       { text: "If you find an Apple receipt, return and choose billing_source = app_store." },
       { text: "If no receipt is found, open the app account/billing page and capture a screenshot of the active plan source." },
     ],
+    safety_note: "This path helps you verify billing source before taking cancellation steps.",
+    risk_level: "low",
+    assumptions: [],
+    missing_information: ["Exact billing source and account owner are still unknown."],
     path: "helper",
     autonomous_action: false,
   };
@@ -79,6 +87,10 @@ export function buildGenericAnalysis(answerText: string): AnswerClarificationAna
       { text: "Execute the first action and capture any confirmation output." },
       { text: `Reference detail: ${compact.slice(0, 120)}` },
     ],
+    safety_note: null,
+    risk_level: "low",
+    assumptions: [],
+    missing_information: [],
     path: "generic",
     autonomous_action: false,
   };

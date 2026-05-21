@@ -1,6 +1,6 @@
 import type {
   AnalyzeTaskRequest,
-  DeterministicTaskAnalysis,
+  TaskAnalysis,
   SelectedTemplate,
 } from "./analyze_task_types.ts";
 
@@ -47,10 +47,11 @@ export function deriveTaskTitle(inputText: string, selectedTemplate: SelectedTem
   return trimmed.length <= 80 ? trimmed : `${trimmed.slice(0, 77)}...`;
 }
 
-function createCancelSubscriptionAnalysis(billingSource: string): DeterministicTaskAnalysis {
+function createCancelSubscriptionAnalysis(billingSource: string): TaskAnalysis {
   const sourceLabel = billingSource.trim();
 
   return {
+    title: "Cancel Subscription",
     summary: `Prepared a cancellation plan for ${sourceLabel}.`,
     current_next_step: `Open ${sourceLabel} billing settings and locate the active subscription.`,
     checklist: [
@@ -58,13 +59,18 @@ function createCancelSubscriptionAnalysis(billingSource: string): DeterministicT
       { text: "Open the cancellation flow and capture the cancellation confirmation." },
       { text: "Set a reminder to verify no renewal charge appears on the next cycle." },
     ],
+    safety_note: null,
+    risk_level: "low",
+    assumptions: [],
+    missing_information: [],
   };
 }
 
-function createGenericAnalysis(inputText: string): DeterministicTaskAnalysis {
+function createGenericAnalysis(inputText: string): TaskAnalysis {
   const compact = inputText.trim().replace(/\s+/g, " ");
 
   return {
+    title: "Task Plan",
     summary: "Created a deterministic first-pass task plan.",
     current_next_step: "Review the plan and complete checklist item 1.",
     checklist: [
@@ -73,6 +79,10 @@ function createGenericAnalysis(inputText: string): DeterministicTaskAnalysis {
       { text: "Send or execute the first concrete action." },
       { text: `Reference note: ${compact.slice(0, 120)}` },
     ],
+    safety_note: null,
+    risk_level: "low",
+    assumptions: [],
+    missing_information: [],
   };
 }
 
@@ -80,7 +90,7 @@ export function buildDeterministicAnalysis(
   inputText: string,
   selectedTemplate: SelectedTemplate,
   billingSource: string | null,
-): DeterministicTaskAnalysis {
+): TaskAnalysis {
   if (selectedTemplate === "cancel_subscription" && billingSource) {
     return createCancelSubscriptionAnalysis(billingSource);
   }

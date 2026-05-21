@@ -37,10 +37,17 @@ export type ChecklistItem = {
   text: string;
 };
 
-export type DeterministicTaskAnalysis = {
+export type RiskLevel = "low" | "medium" | "high";
+
+export type TaskAnalysis = {
+  title: string;
   summary: string;
   current_next_step: string;
   checklist: ChecklistItem[];
+  safety_note: string | null;
+  risk_level: RiskLevel;
+  assumptions: string[];
+  missing_information: string[];
 };
 
 export type ClarificationSuccessResponse = {
@@ -68,7 +75,7 @@ export type TaskAnalysisSuccessResponse = {
   access_state: string;
   clarification: null;
   task_output_id: string;
-  task_analysis: DeterministicTaskAnalysis;
+  task_analysis: TaskAnalysis;
 };
 
 export type AnalyzeTaskSuccessResponse =
