@@ -29,7 +29,7 @@ Notes:
   - `supabase/migrations/20260522013354_add_task_output_prompt_schema_versions.sql`
 - Draft reply output type support is included in:
   - `supabase/migrations/20260522180444_allow_draft_reply_output_type.sql`
-- Edge Functions implemented through BE-10 include:
+- Edge Functions implemented through BE-11 include:
   - `analyze-task` (OpenAI-backed for generic paths, deterministic clarification preserved)
   - `answer-clarification` (OpenAI-backed for generic answers, deterministic App Store/helper paths preserved)
   - `complete-onboarding`
@@ -42,6 +42,12 @@ Notes:
   - `reminder-cancel`
   - `reminder-snooze`
   - `notification-triggered`
+  - `list-tasks`
+  - `get-task-detail`
+  - `get-task-outputs`
+  - `get-task-events`
+  - `get-checklist-items`
+  - `get-reminders`
 
 ## Access state functions (BE-04)
 
@@ -228,6 +234,54 @@ curl -X POST "http://127.0.0.1:54321/functions/v1/notification-triggered" \
     "local_notification_status": "delivered",
     "mark_follow_up_needed": true
   }'
+```
+
+## Task read APIs (BE-11)
+
+Implemented functions:
+- `list-tasks` (`GET`)
+- `get-task-detail` (`GET`)
+- `get-task-outputs` (`GET`)
+- `get-task-events` (`GET`)
+- `get-checklist-items` (`GET`)
+- `get-reminders` (`GET`)
+
+Local curl examples (placeholder tokens only):
+
+```bash
+curl -X GET "http://127.0.0.1:54321/functions/v1/list-tasks?filter=in_progress&sort=updated_desc&limit=20&page=0" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
+```
+
+```bash
+curl -X GET "http://127.0.0.1:54321/functions/v1/get-task-detail?task_id=<TASK_ID_UUID>" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
+```
+
+```bash
+curl -X GET "http://127.0.0.1:54321/functions/v1/get-task-outputs?task_id=<TASK_ID_UUID>&output_type=analysis&limit=20&page=0" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
+```
+
+```bash
+curl -X GET "http://127.0.0.1:54321/functions/v1/get-task-events?task_id=<TASK_ID_UUID>&order=desc&limit=30&page=0" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
+```
+
+```bash
+curl -X GET "http://127.0.0.1:54321/functions/v1/get-checklist-items?task_id=<TASK_ID_UUID>&status=pending&sort=position_asc&limit=100&page=0" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
+```
+
+```bash
+curl -X GET "http://127.0.0.1:54321/functions/v1/get-reminders?task_id=<TASK_ID_UUID>&status=scheduled&sort=remind_at_asc&limit=30&page=0" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
 ```
 
 ```bash
