@@ -29,12 +29,19 @@ Notes:
   - `supabase/migrations/20260522013354_add_task_output_prompt_schema_versions.sql`
 - Draft reply output type support is included in:
   - `supabase/migrations/20260522180444_allow_draft_reply_output_type.sql`
-- Edge Functions implemented through BE-09 include:
+- Edge Functions implemented through BE-10 include:
   - `analyze-task` (OpenAI-backed for generic paths, deterministic clarification preserved)
   - `answer-clarification` (OpenAI-backed for generic answers, deterministic App Store/helper paths preserved)
   - `complete-onboarding`
   - `generate-reply`
   - `get-access-state`
+  - `update-task-status`
+  - `message-marked-sent`
+  - `reminder-create`
+  - `reminder-update`
+  - `reminder-cancel`
+  - `reminder-snooze`
+  - `notification-triggered`
 
 ## Access state functions (BE-04)
 
@@ -126,6 +133,100 @@ curl -X POST "http://127.0.0.1:54321/functions/v1/generate-reply" \
     "task_id": "<TASK_ID_UUID>",
     "tone": "polite",
     "language": "English"
+  }'
+```
+
+## Task actions and reminders (BE-10)
+
+Implemented functions:
+- `update-task-status` (`POST`)
+- `message-marked-sent` (`POST`)
+- `reminder-create` (`POST`)
+- `reminder-update` (`POST`)
+- `reminder-cancel` (`POST`)
+- `reminder-snooze` (`POST`)
+- `notification-triggered` (`POST`)
+
+Local curl examples (placeholder tokens only):
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/update-task-status" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "<TASK_ID_UUID>",
+    "status": "completed",
+    "event_message": "Task marked done by user"
+  }'
+```
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/message-marked-sent" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "<TASK_ID_UUID>"
+  }'
+```
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/reminder-create" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "<TASK_ID_UUID>",
+    "remind_at": "2026-06-01T09:00:00Z",
+    "ios_notification_id": "<IOS_NOTIFICATION_ID>",
+    "local_notification_status": "scheduled"
+  }'
+```
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/reminder-update" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reminder_id": "<REMINDER_ID_UUID>",
+    "remind_at": "2026-06-01T10:30:00Z",
+    "local_notification_status": "scheduled"
+  }'
+```
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/reminder-cancel" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reminder_id": "<REMINDER_ID_UUID>"
+  }'
+```
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/reminder-snooze" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reminder_id": "<REMINDER_ID_UUID>",
+    "snooze_until": "2026-06-01T11:00:00Z",
+    "local_notification_status": "scheduled"
+  }'
+```
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/notification-triggered" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "reminder_id": "<REMINDER_ID_UUID>",
+    "local_notification_status": "delivered",
+    "mark_follow_up_needed": true
   }'
 ```
 
