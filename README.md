@@ -25,10 +25,15 @@ Notes:
   - `supabase/migrations/20260522013000_add_onboarding_completed_at_to_profiles.sql`
 - Analyze task scaffold support is included in:
   - `supabase/migrations/20260522023000_add_analyze_task_scaffold_support.sql`
-- Edge Functions implemented through BE-07 include:
-  - `analyze-task` (deterministic scaffold, no OpenAI)
-  - `answer-clarification` (deterministic scaffold, no OpenAI)
+- Task output metadata support is included in:
+  - `supabase/migrations/20260522013354_add_task_output_prompt_schema_versions.sql`
+- Draft reply output type support is included in:
+  - `supabase/migrations/20260522180444_allow_draft_reply_output_type.sql`
+- Edge Functions implemented through BE-09 include:
+  - `analyze-task` (OpenAI-backed for generic paths, deterministic clarification preserved)
+  - `answer-clarification` (OpenAI-backed for generic answers, deterministic App Store/helper paths preserved)
   - `complete-onboarding`
+  - `generate-reply`
   - `get-access-state`
 
 ## Access state functions (BE-04)
@@ -102,6 +107,37 @@ curl -X POST "http://127.0.0.1:54321/functions/v1/answer-clarification" \
     "clarification_id": "<CLARIFICATION_ID_UUID>",
     "answer_text": "This was billed through App Store.",
     "billing_source": "app_store"
+  }'
+```
+
+## Generate reply (BE-09)
+
+Implemented function:
+- `generate-reply` (`POST`)
+
+Local curl examples (placeholder tokens only):
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/generate-reply" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "<TASK_ID_UUID>",
+    "tone": "polite",
+    "language": "English"
+  }'
+```
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/generate-reply" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task_id": "<TASK_ID_UUID>",
+    "tone": "shorter",
+    "language": "auto"
   }'
 ```
 
