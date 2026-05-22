@@ -284,6 +284,66 @@ curl -X GET "http://127.0.0.1:54321/functions/v1/get-reminders?task_id=<TASK_ID_
   -H "Authorization: Bearer <USER_ACCESS_TOKEN>"
 ```
 
+## StoreKit mirroring scaffold (BE-12)
+
+Implemented functions:
+- `validate-subscription` (`POST`)
+- `restore-purchases` (`POST`)
+
+Notes:
+- These functions require authenticated users.
+- TestFlight phase uses `ios_verified_mirror` mode only.
+- Mirroring for `production` is intentionally blocked until server-side Apple validation is implemented.
+- TODO markers are included for:
+  - App Store Server API validation before public release.
+  - App Store Server Notifications integration before public release.
+- Starter Access remains backend-controlled.
+- App Store trial remains StoreKit-controlled.
+
+Local curl examples (placeholder tokens only):
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/validate-subscription" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "verification_mode": "ios_verified_mirror",
+    "environment": "testflight",
+    "entitlement": {
+      "original_transaction_id": "<ORIGINAL_TRANSACTION_ID>",
+      "transaction_id": "<TRANSACTION_ID>",
+      "product_id": "onedone.premium.monthly",
+      "status": "trialing",
+      "current_period_start": "2026-06-01T00:00:00Z",
+      "current_period_end": "2026-06-15T00:00:00Z",
+      "trial_started_at": "2026-06-01T00:00:00Z",
+      "trial_ends_at": "2026-06-15T00:00:00Z"
+    }
+  }'
+```
+
+```bash
+curl -X POST "http://127.0.0.1:54321/functions/v1/restore-purchases" \
+  -H "apikey: <SUPABASE_ANON_KEY>" \
+  -H "Authorization: Bearer <USER_ACCESS_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "verification_mode": "ios_verified_mirror",
+    "environment": "testflight",
+    "entitlements": [
+      {
+        "original_transaction_id": "<ORIGINAL_TRANSACTION_ID>",
+        "transaction_id": "<TRANSACTION_ID>",
+        "product_id": "onedone.premium.monthly",
+        "status": "active",
+        "current_period_start": "2026-06-01T00:00:00Z",
+        "current_period_end": "2026-07-01T00:00:00Z"
+      }
+    ]
+  }'
+```
+
 ```bash
 curl -X POST "http://127.0.0.1:54321/functions/v1/generate-reply" \
   -H "apikey: <SUPABASE_ANON_KEY>" \
