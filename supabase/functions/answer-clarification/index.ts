@@ -31,6 +31,11 @@ import {
   callOpenAiStructuredJson,
   type OpenAiUsageDetails,
 } from "../_shared/openai_client.ts";
+import {
+  checkDailyAiActionLimit,
+  checkRegenerateLimit,
+  type RateLimitErrorDetails,
+} from "../_shared/rate_limits.ts";
 
 type UserClient = any;
 type ServiceClient = any;
@@ -69,6 +74,8 @@ type JsonError = {
     code: AnswerClarificationErrorCode;
     message: string;
     retryable: boolean;
+    limit_type?: "daily_ai_actions" | "regenerate";
+    retry_after_seconds?: number;
   };
 };
 
@@ -102,14 +109,30 @@ function errorResponse(
   message: string,
   status: number,
   retryable: boolean,
+  rateLimit?: RateLimitErrorDetails,
 ): Response {
+  const errorBody: JsonError["error"] = {
+    code,
+    message,
+    retryable,
+  };
+
+  if (rateLimit) {
+    errorBody.limit_type = rateLimit.limit_type;
+    errorBody.retry_after_seconds = rateLimit.retry_after_seconds;
+  }
+
   return jsonResponse(
     {
       ok: false,
-      error: { code, message, retryable },
+      error: errorBody,
     },
     status,
   );
+}
+
+function rateLimitedResponse(limit: RateLimitErrorDetails): Response {
+  return errorResponse("rate_limited", limit.message, 429, false, limit);
 }
 
 function makeProcessingError(
@@ -440,6 +463,43 @@ Deno.serve(async (req) => {
     );
   }
 
+  const billingSource = deriveBillingSource(payload.answer_text, payload.billing_source);
+  const uncertain = isNotSureAnswer(payload.answer_text);
+  const shouldRunAi = billingSource !== "app_store" && !uncertain;
+
+  if (shouldRunAi) {
+    let dailyLimitCheck: Awaited<ReturnType<typeof checkDailyAiActionLimit>>;
+    try {
+      dailyLimitCheck = await checkDailyAiActionLimit({
+        userClient,
+        userId: user.id,
+        accessState,
+      });
+    } catch {
+      return errorResponse("internal_error", "Failed to evaluate daily AI usage limits", 500, true);
+    }
+
+    if (!dailyLimitCheck.ok) {
+      return rateLimitedResponse(dailyLimitCheck.error);
+    }
+  }
+
+  let regenerateLimitCheck: Awaited<ReturnType<typeof checkRegenerateLimit>>;
+  try {
+    regenerateLimitCheck = await checkRegenerateLimit({
+      userClient,
+      userId: user.id,
+      taskId: task.id,
+      outputType: "analysis",
+    });
+  } catch {
+    return errorResponse("internal_error", "Failed to evaluate regenerate limits", 500, true);
+  }
+
+  if (!regenerateLimitCheck.ok) {
+    return rateLimitedResponse(regenerateLimitCheck.error);
+  }
+
   let producedOutputId: string | null = null;
 
   let serviceClient: ServiceClient | null = null;
@@ -479,9 +539,6 @@ Deno.serve(async (req) => {
     if (clarificationAnsweredEventError) {
       throw makeProcessingError("processing_failed", "Failed to create clarification answered event", true);
     }
-
-    const billingSource = deriveBillingSource(payload.answer_text, payload.billing_source);
-    const uncertain = isNotSureAnswer(payload.answer_text);
 
     let analysis: AnswerClarificationAnalysis;
     let outputModel = "rule_based_v1";

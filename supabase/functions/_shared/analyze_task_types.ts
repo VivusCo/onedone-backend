@@ -18,6 +18,7 @@ export type AnalyzeTaskRequest = {
 export type ErrorCode =
   | "unauthorized"
   | "access_blocked"
+  | "rate_limited"
   | "invalid_request"
   | "idempotency_conflict"
   | "idempotency_in_progress"
@@ -30,6 +31,8 @@ export type ErrorResponse = {
     code: ErrorCode;
     message: string;
     retryable: boolean;
+    limit_type?: "daily_ai_actions" | "regenerate";
+    retry_after_seconds?: number;
   };
 };
 

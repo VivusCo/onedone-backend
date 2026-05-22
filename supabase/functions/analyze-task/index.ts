@@ -33,6 +33,11 @@ import {
   callOpenAiStructuredJson,
   type OpenAiUsageDetails,
 } from "../_shared/openai_client.ts";
+import {
+  checkDailyAiActionLimit,
+  checkRegenerateLimit,
+  type RateLimitErrorDetails,
+} from "../_shared/rate_limits.ts";
 
 type ProfileAccessRow = {
   onboarding_required: boolean | null;
@@ -72,6 +77,8 @@ type JsonError = {
     code: ErrorCode;
     message: string;
     retryable: boolean;
+    limit_type?: "daily_ai_actions" | "regenerate";
+    retry_after_seconds?: number;
   };
 };
 
@@ -103,14 +110,35 @@ function jsonResponse(payload: AnalyzeTaskResponse | JsonError, status = 200): R
   });
 }
 
-function errorResponse(code: ErrorCode, message: string, status: number, retryable: boolean): Response {
+function errorResponse(
+  code: ErrorCode,
+  message: string,
+  status: number,
+  retryable: boolean,
+  rateLimit?: RateLimitErrorDetails,
+): Response {
+  const errorBody: JsonError["error"] = {
+    code,
+    message,
+    retryable,
+  };
+
+  if (rateLimit) {
+    errorBody.limit_type = rateLimit.limit_type;
+    errorBody.retry_after_seconds = rateLimit.retry_after_seconds;
+  }
+
   return jsonResponse(
     {
       ok: false,
-      error: { code, message, retryable },
+      error: errorBody,
     },
     status,
   );
+}
+
+function rateLimitedResponse(limit: RateLimitErrorDetails): Response {
+  return errorResponse("rate_limited", limit.message, 429, false, limit);
 }
 
 function processingError(code: ErrorCode, message: string, retryable: boolean): ProcessingError {
@@ -410,6 +438,8 @@ Deno.serve(async (req) => {
 
   const payload = validated.data;
   const selectedTemplate = normalizeSelectedTemplate(payload);
+  const isCancelSubscription = detectCancelSubscription(payload.input_text, selectedTemplate);
+  const missingBillingSource = isCancelSubscription && !payload.billing_source?.trim();
 
   let accessState: string;
   try {
@@ -425,6 +455,23 @@ Deno.serve(async (req) => {
       403,
       false,
     );
+  }
+
+  if (!missingBillingSource) {
+    let dailyLimitCheck: Awaited<ReturnType<typeof checkDailyAiActionLimit>>;
+    try {
+      dailyLimitCheck = await checkDailyAiActionLimit({
+        userClient,
+        userId: user.id,
+        accessState,
+      });
+    } catch {
+      return errorResponse("internal_error", "Failed to evaluate daily AI usage limits", 500, true);
+    }
+
+    if (!dailyLimitCheck.ok) {
+      return rateLimitedResponse(dailyLimitCheck.error);
+    }
   }
 
   const idempotencyKey = req.headers.get("Idempotency-Key")?.trim() ?? "";
@@ -510,10 +557,8 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const isCancelSubscription = detectCancelSubscription(payload.input_text, selectedTemplate);
-    const missingBillingSource = isCancelSubscription && !payload.billing_source?.trim();
-
     let task: TaskRow | null = null;
+    let regenerateChecked = false;
 
     if (existingTaskIdForRetry) {
       const { data: existingTask, error: existingTaskError } = await userClient
@@ -528,6 +573,27 @@ Deno.serve(async (req) => {
       }
 
       task = existingTask;
+
+      if (!missingBillingSource) {
+        let regenerateLimitCheck: Awaited<ReturnType<typeof checkRegenerateLimit>>;
+        try {
+          regenerateLimitCheck = await checkRegenerateLimit({
+            userClient,
+            userId: user.id,
+            taskId: task.id,
+            outputType: "analysis",
+          });
+        } catch {
+          throw processingError("internal_error", "Failed to evaluate regenerate limits", true);
+        }
+
+        if (!regenerateLimitCheck.ok) {
+          await markIdempotencyFailed(userClient, idemRow, task.id);
+          return rateLimitedResponse(regenerateLimitCheck.error);
+        }
+
+        regenerateChecked = true;
+      }
 
       await userClient.from("checklist_items").delete().eq("task_id", task.id).eq("user_id", user.id);
       await userClient.from("clarifications").delete().eq("task_id", task.id).eq("user_id", user.id).eq("status", "open");
@@ -599,6 +665,25 @@ Deno.serve(async (req) => {
 
     taskId = task.id;
     await setIdempotencyTaskId(userClient, idemRow, task.id);
+
+    if (!missingBillingSource && !regenerateChecked) {
+      let regenerateLimitCheck: Awaited<ReturnType<typeof checkRegenerateLimit>>;
+      try {
+        regenerateLimitCheck = await checkRegenerateLimit({
+          userClient,
+          userId: user.id,
+          taskId: task.id,
+          outputType: "analysis",
+        });
+      } catch {
+        throw processingError("internal_error", "Failed to evaluate regenerate limits", true);
+      }
+
+      if (!regenerateLimitCheck.ok) {
+        await markIdempotencyFailed(userClient, idemRow, task.id);
+        return rateLimitedResponse(regenerateLimitCheck.error);
+      }
+    }
 
     if (missingBillingSource) {
       const { data: clarification, error: clarificationError } = await userClient
