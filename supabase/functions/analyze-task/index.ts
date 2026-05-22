@@ -1,6 +1,6 @@
 import { corsHeaders } from "../_shared/cors.ts";
-import { buildAccessStateResponse } from "../_shared/access_state.ts";
 import { createServiceClient, requireAuthenticatedUser } from "../_shared/auth.ts";
+import { loadStoreKitAccessState } from "../_shared/subscription_mirroring.ts";
 import {
   ANALYZE_TASK_MAX_INPUT_LENGTH,
   ANALYZE_TASK_MIN_INPUT_LENGTH,
@@ -38,14 +38,6 @@ import {
   checkRegenerateLimit,
   type RateLimitErrorDetails,
 } from "../_shared/rate_limits.ts";
-
-type ProfileAccessRow = {
-  onboarding_required: boolean | null;
-  onboarding_completed_at: string | null;
-  starter_started_at: string | null;
-  starter_ends_at: string | null;
-  starter_status: string | null;
-};
 
 type TaskRow = {
   id: string;
@@ -93,8 +85,6 @@ type AiAnalysisResult = {
   usage: OpenAiUsageDetails;
 };
 
-const PROFILE_SELECT =
-  "onboarding_required,onboarding_completed_at,starter_started_at,starter_ends_at,starter_status";
 const ANALYZE_FUNCTION_NAME = "analyze-task";
 
 type UserClient = any;
@@ -211,27 +201,6 @@ function validateRequestBody(raw: unknown): { valid: true; data: AnalyzeTaskRequ
       billing_source: body.billing_source ?? null,
     },
   };
-}
-
-async function getAccessState(userClient: UserClient, userId: string): Promise<string> {
-  const { data: profile, error } = await userClient
-    .from("profiles")
-    .select(PROFILE_SELECT)
-    .eq("id", userId)
-    .maybeSingle<ProfileAccessRow>();
-
-  if (error) throw new Error("Failed to read profile access state");
-
-  const fallback: ProfileAccessRow = {
-    onboarding_required: true,
-    onboarding_completed_at: null,
-    starter_started_at: null,
-    starter_ends_at: null,
-    starter_status: "not_started",
-  };
-
-  const access = buildAccessStateResponse(profile ?? fallback);
-  return access.access_state;
 }
 
 function buildRequestFingerprint(payload: AnalyzeTaskRequest, selectedTemplate: SelectedTemplate): string {
@@ -441,37 +410,22 @@ Deno.serve(async (req) => {
   const isCancelSubscription = detectCancelSubscription(payload.input_text, selectedTemplate);
   const missingBillingSource = isCancelSubscription && !payload.billing_source?.trim();
 
-  let accessState: string;
+  let accessStatePayload;
   try {
-    accessState = await getAccessState(userClient, user.id);
+    accessStatePayload = await loadStoreKitAccessState(userClient, user.id);
   } catch {
     return errorResponse("internal_error", "Failed to evaluate access state", 500, true);
   }
 
-  if (accessState !== "starter_active") {
+  const accessState = accessStatePayload.access_state;
+
+  if (!accessStatePayload.feature_flags.can_use_core_features) {
     return errorResponse(
       "access_blocked",
       "Access is not active. Complete onboarding or start trial when available.",
       403,
       false,
     );
-  }
-
-  if (!missingBillingSource) {
-    let dailyLimitCheck: Awaited<ReturnType<typeof checkDailyAiActionLimit>>;
-    try {
-      dailyLimitCheck = await checkDailyAiActionLimit({
-        userClient,
-        userId: user.id,
-        accessState,
-      });
-    } catch {
-      return errorResponse("internal_error", "Failed to evaluate daily AI usage limits", 500, true);
-    }
-
-    if (!dailyLimitCheck.ok) {
-      return rateLimitedResponse(dailyLimitCheck.error);
-    }
   }
 
   const idempotencyKey = req.headers.get("Idempotency-Key")?.trim() ?? "";
@@ -543,6 +497,25 @@ Deno.serve(async (req) => {
       existingTaskIdForRetry = idemRow.task_id;
     } else {
       idemRow = insertedRow;
+    }
+  }
+
+  if (!missingBillingSource) {
+    let dailyLimitCheck: Awaited<ReturnType<typeof checkDailyAiActionLimit>>;
+    try {
+      dailyLimitCheck = await checkDailyAiActionLimit({
+        userClient,
+        userId: user.id,
+        accessState,
+      });
+    } catch {
+      await markIdempotencyFailed(userClient, idemRow, existingTaskIdForRetry);
+      return errorResponse("internal_error", "Failed to evaluate daily AI usage limits", 500, true);
+    }
+
+    if (!dailyLimitCheck.ok) {
+      await markIdempotencyFailed(userClient, idemRow, existingTaskIdForRetry);
+      return rateLimitedResponse(dailyLimitCheck.error);
     }
   }
 

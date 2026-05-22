@@ -29,12 +29,14 @@ Notes:
   - `supabase/migrations/20260522013354_add_task_output_prompt_schema_versions.sql`
 - Draft reply output type support is included in:
   - `supabase/migrations/20260522180444_allow_draft_reply_output_type.sql`
-- Edge Functions implemented through BE-11 include:
+- Edge Functions implemented through BE-14 include:
   - `analyze-task` (OpenAI-backed for generic paths, deterministic clarification preserved)
   - `answer-clarification` (OpenAI-backed for generic answers, deterministic App Store/helper paths preserved)
   - `complete-onboarding`
   - `generate-reply`
   - `get-access-state`
+  - `validate-subscription`
+  - `restore-purchases`
   - `update-task-status`
   - `message-marked-sent`
   - `reminder-create`
@@ -48,6 +50,10 @@ Notes:
   - `get-task-events`
   - `get-checklist-items`
   - `get-reminders`
+  - `feedback`
+  - `delete-task`
+  - `delete-all-data`
+  - `delete-account`
 
 ## Access state functions (BE-04)
 
