@@ -5,6 +5,11 @@ import {
   callOpenAiStructuredJson,
   type OpenAiUsageDetails,
 } from "../_shared/openai_client.ts";
+import {
+  checkDailyAiActionLimit,
+  checkRegenerateLimit,
+  type RateLimitErrorDetails,
+} from "../_shared/rate_limits.ts";
 
 type UserClient = any;
 type ServiceClient = any;
@@ -42,6 +47,7 @@ type GenerateReplyRequest = {
 type GenerateReplyErrorCode =
   | "unauthorized"
   | "access_blocked"
+  | "rate_limited"
   | "invalid_request"
   | "not_found"
   | "processing_failed"
@@ -53,6 +59,8 @@ type GenerateReplyErrorResponse = {
     code: GenerateReplyErrorCode;
     message: string;
     retryable: boolean;
+    limit_type?: "daily_ai_actions" | "regenerate";
+    retry_after_seconds?: number;
   };
 };
 
@@ -88,6 +96,8 @@ type JsonError = {
     code: GenerateReplyErrorCode;
     message: string;
     retryable: boolean;
+    limit_type?: "daily_ai_actions" | "regenerate";
+    retry_after_seconds?: number;
   };
 };
 
@@ -128,14 +138,30 @@ function errorResponse(
   message: string,
   status: number,
   retryable: boolean,
+  rateLimit?: RateLimitErrorDetails,
 ): Response {
+  const errorBody: JsonError["error"] = {
+    code,
+    message,
+    retryable,
+  };
+
+  if (rateLimit) {
+    errorBody.limit_type = rateLimit.limit_type;
+    errorBody.retry_after_seconds = rateLimit.retry_after_seconds;
+  }
+
   return jsonResponse(
     {
       ok: false,
-      error: { code, message, retryable },
+      error: errorBody,
     },
     status,
   );
+}
+
+function rateLimitedResponse(limit: RateLimitErrorDetails): Response {
+  return errorResponse("rate_limited", limit.message, 429, false, limit);
 }
 
 function processingError(code: GenerateReplyErrorCode, message: string, retryable: boolean): ProcessingError {
@@ -471,6 +497,21 @@ Deno.serve(async (req) => {
     );
   }
 
+  let dailyLimitCheck: Awaited<ReturnType<typeof checkDailyAiActionLimit>>;
+  try {
+    dailyLimitCheck = await checkDailyAiActionLimit({
+      userClient,
+      userId: user.id,
+      accessState,
+    });
+  } catch {
+    return errorResponse("internal_error", "Failed to evaluate daily AI usage limits", 500, true);
+  }
+
+  if (!dailyLimitCheck.ok) {
+    return rateLimitedResponse(dailyLimitCheck.error);
+  }
+
   const { data: task, error: taskError } = await userClient
     .from("tasks")
     .select("id,title,description,status,current_next_step")
@@ -484,6 +525,22 @@ Deno.serve(async (req) => {
 
   if (!task) {
     return errorResponse("not_found", "Task not found", 404, false);
+  }
+
+  let regenerateLimitCheck: Awaited<ReturnType<typeof checkRegenerateLimit>>;
+  try {
+    regenerateLimitCheck = await checkRegenerateLimit({
+      userClient,
+      userId: user.id,
+      taskId: task.id,
+      outputType: "draft_reply",
+    });
+  } catch {
+    return errorResponse("internal_error", "Failed to evaluate regenerate limits", 500, true);
+  }
+
+  if (!regenerateLimitCheck.ok) {
+    return rateLimitedResponse(regenerateLimitCheck.error);
   }
 
   let serviceClient: ServiceClient;

@@ -11,6 +11,7 @@ export type AnswerClarificationRequest = {
 export type AnswerClarificationErrorCode =
   | "unauthorized"
   | "access_blocked"
+  | "rate_limited"
   | "invalid_request"
   | "not_found"
   | "ownership_mismatch"
@@ -24,6 +25,8 @@ export type AnswerClarificationErrorResponse = {
     code: AnswerClarificationErrorCode;
     message: string;
     retryable: boolean;
+    limit_type?: "daily_ai_actions" | "regenerate";
+    retry_after_seconds?: number;
   };
 };
 
