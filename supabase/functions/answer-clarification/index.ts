@@ -1,6 +1,6 @@
 import { corsHeaders } from "../_shared/cors.ts";
-import { buildAccessStateResponse } from "../_shared/access_state.ts";
 import { createServiceClient, requireAuthenticatedUser } from "../_shared/auth.ts";
+import { loadStoreKitAccessState } from "../_shared/subscription_mirroring.ts";
 import {
   ANSWER_CLARIFICATION_MAX_LENGTH,
   ANSWER_CLARIFICATION_MIN_LENGTH,
@@ -39,14 +39,6 @@ import {
 
 type UserClient = any;
 type ServiceClient = any;
-
-type ProfileAccessRow = {
-  onboarding_required: boolean | null;
-  onboarding_completed_at: string | null;
-  starter_started_at: string | null;
-  starter_ends_at: string | null;
-  starter_status: string | null;
-};
 
 type TaskRow = {
   id: string;
@@ -90,8 +82,6 @@ type AiClarificationResult = {
   usage: OpenAiUsageDetails;
 };
 
-const PROFILE_SELECT =
-  "onboarding_required,onboarding_completed_at,starter_started_at,starter_ends_at,starter_status";
 const FUNCTION_NAME = "answer-clarification";
 
 function jsonResponse(payload: AnswerClarificationResponse | JsonError, status = 200): Response {
@@ -232,26 +222,6 @@ function validateRequestBody(
   };
 }
 
-async function getAccessState(userClient: UserClient, userId: string): Promise<string> {
-  const { data: profile, error } = await userClient
-    .from("profiles")
-    .select(PROFILE_SELECT)
-    .eq("id", userId)
-    .maybeSingle<ProfileAccessRow>();
-
-  if (error) throw new Error("Failed to read profile access state");
-
-  const fallback: ProfileAccessRow = {
-    onboarding_required: true,
-    onboarding_completed_at: null,
-    starter_started_at: null,
-    starter_ends_at: null,
-    starter_status: "not_started",
-  };
-
-  return buildAccessStateResponse(profile ?? fallback).access_state;
-}
-
 function buildSystemPrompt(safetyInstruction: string): string {
   return [
     "You are OneDone backend clarification assistant.",
@@ -388,14 +358,16 @@ Deno.serve(async (req) => {
 
   const payload = validated.data;
 
-  let accessState: string;
+  let accessStatePayload;
   try {
-    accessState = await getAccessState(userClient, user.id);
+    accessStatePayload = await loadStoreKitAccessState(userClient, user.id);
   } catch {
     return errorResponse("internal_error", "Failed to evaluate access state", 500, true);
   }
 
-  if (accessState !== "starter_active") {
+  const accessState = accessStatePayload.access_state;
+
+  if (!accessStatePayload.feature_flags.can_use_core_features) {
     return errorResponse(
       "access_blocked",
       "Access is not active. Complete onboarding or start trial when available.",

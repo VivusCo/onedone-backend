@@ -66,6 +66,14 @@ export type SubscriptionEventType =
   | "refund"
   | "manual_adjustment";
 
+type UserClient = any;
+
+const PROFILE_SELECT =
+  "onboarding_required,onboarding_completed_at,starter_started_at,starter_ends_at,starter_status";
+
+const SUBSCRIPTION_SELECT =
+  "id,user_id,provider,product_id,original_transaction_id,status,current_period_start,current_period_end,trial_started_at,trial_ends_at,cancel_at,canceled_at,last_verified_at,metadata";
+
 const OPEN_ACCESS_STATES = new Set([
   "starter_active",
   "trial_active",
@@ -196,6 +204,45 @@ export function buildStoreKitAccessStateResponse(
     subscription_ends_at: subscription?.current_period_end ?? null,
     feature_flags: buildFeatureFlags(accessState),
   };
+}
+
+export async function loadStoreKitAccessState(
+  userClient: UserClient,
+  userId: string,
+  now = new Date(),
+) {
+  const { data: profile, error: profileError } = await userClient
+    .from("profiles")
+    .select(PROFILE_SELECT)
+    .eq("id", userId)
+    .maybeSingle<ProfileAccessRow>();
+
+  if (profileError) {
+    throw new Error("Failed to read profile access state");
+  }
+
+  const fallbackProfile: ProfileAccessRow = {
+    onboarding_required: true,
+    onboarding_completed_at: null,
+    starter_started_at: null,
+    starter_ends_at: null,
+    starter_status: "not_started",
+  };
+
+  const { data: subscriptions, error: subscriptionsError } = await userClient
+    .from("subscriptions")
+    .select(SUBSCRIPTION_SELECT)
+    .eq("user_id", userId)
+    .order("last_verified_at", { ascending: false, nullsFirst: false })
+    .limit(50)
+    .returns<SubscriptionRow[]>();
+
+  if (subscriptionsError) {
+    throw new Error("Failed to read subscriptions for access state");
+  }
+
+  const relevantSubscription = pickRelevantSubscription(subscriptions ?? []);
+  return buildStoreKitAccessStateResponse(profile ?? fallbackProfile, relevantSubscription, now);
 }
 
 export function normalizeVerificationMode(value: unknown): MirrorVerificationMode | null {

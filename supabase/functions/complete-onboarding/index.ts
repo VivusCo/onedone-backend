@@ -1,6 +1,6 @@
 import { corsHeaders } from "../_shared/cors.ts";
-import { buildAccessStateResponse } from "../_shared/access_state.ts";
 import { createServiceClient, requireAuthenticatedUser } from "../_shared/auth.ts";
+import { loadStoreKitAccessState } from "../_shared/subscription_mirroring.ts";
 
 const STARTER_ACCESS_DAYS = 3;
 
@@ -117,8 +117,12 @@ Deno.serve(async (req) => {
     profile = updatedProfile;
   }
 
-  return jsonResponse({
-    ok: true,
-    ...buildAccessStateResponse(profile, now),
-  });
+  let accessStatePayload;
+  try {
+    accessStatePayload = await loadStoreKitAccessState(userClient, user.id, now);
+  } catch {
+    return jsonResponse({ error: "Failed to read access state" }, 500);
+  }
+
+  return jsonResponse({ ok: true, ...accessStatePayload });
 });
