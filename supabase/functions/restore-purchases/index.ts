@@ -7,7 +7,6 @@ import {
   normalizeOptionalBoolean,
   normalizeOptionalIso,
   normalizeOptionalString,
-  normalizeSubscriptionStatus,
   normalizeVerificationMode,
   pickRelevantSubscription,
   sanitizeMetadata,
@@ -157,6 +156,31 @@ function readRequiredString(raw: unknown): string | null {
   return trimmed;
 }
 
+function readRequiredIso(raw: unknown, fieldName: string): { ok: true; value: string } | {
+  ok: false;
+  message: string;
+} {
+  if (typeof raw !== "string") {
+    return {
+      ok: false,
+      message: `${fieldName} is required and must be a valid ISO-8601 timestamp`,
+    };
+  }
+
+  const normalized = normalizeOptionalIso(raw);
+  if (!normalized) {
+    return {
+      ok: false,
+      message: `${fieldName} is required and must be a valid ISO-8601 timestamp`,
+    };
+  }
+
+  return {
+    ok: true,
+    value: normalized,
+  };
+}
+
 function readOptionalIso(raw: unknown, fieldName: string): { ok: true; value: string | null } | {
   ok: false;
   message: string;
@@ -233,110 +257,190 @@ function readOptionalString(raw: unknown, fieldName: string): { ok: true; value:
   };
 }
 
-function parseEntitlement(raw: unknown): { valid: true; entitlement: MirroredEntitlement } | {
+function resolveMirrorEnvironment(params: {
+  primaryValue: unknown;
+  primarySource: string;
+  fallbackValue: unknown;
+}): { ok: true; environment: MirrorEnvironment; source: string } | {
+  ok: false;
+  response: Response;
+} {
+  let selectedRaw = params.primaryValue;
+  let source = params.primarySource;
+
+  const primaryString = typeof params.primaryValue === "string" ? params.primaryValue.trim() : "";
+  if (!primaryString) {
+    selectedRaw = params.fallbackValue;
+    source = "body.environment";
+  }
+
+  const selectedString = typeof selectedRaw === "string" ? selectedRaw.trim() : "";
+  if (!selectedString) {
+    return {
+      ok: false,
+      response: errorResponse(
+        "invalid_request",
+        `environment must be one of: xcode, sandbox, testflight (read from ${source})`,
+        400,
+        false,
+      ),
+    };
+  }
+
+  if (selectedString.toLowerCase() === "production") {
+    return {
+      ok: false,
+      response: errorResponse(
+        "invalid_request",
+        `production environment mirroring is disabled until server-side Apple validation is implemented (read from ${source})`,
+        400,
+        false,
+      ),
+    };
+  }
+
+  const environment = normalizeMirrorEnvironment(selectedString);
+  if (!environment) {
+    return {
+      ok: false,
+      response: errorResponse(
+        "invalid_request",
+        `environment must be one of: xcode, sandbox, testflight (read from ${source})`,
+        400,
+        false,
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    environment,
+    source,
+  };
+}
+
+function normalizeIncomingStatus(value: unknown): SubscriptionStatus | null {
+  if (typeof value !== "string") return null;
+
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return null;
+
+  if (normalized === "trialing" || normalized === "trial" || normalized === "in_trial") return "trialing";
+  if (normalized === "active" || normalized === "subscribed") return "active";
+  if (normalized === "grace_period" || normalized === "in_grace_period" || normalized === "billing_retry") {
+    return "grace_period";
+  }
+  if (normalized === "expired") return "expired";
+  if (normalized === "canceled" || normalized === "cancelled" || normalized === "revoked") return "canceled";
+  if (normalized === "refunded") return "refunded";
+
+  return null;
+}
+
+function deriveFallbackStatus(params: {
+  expiresAt: string | null;
+  revocationDate: string | null;
+}): SubscriptionStatus {
+  if (params.revocationDate) {
+    return "canceled";
+  }
+
+  if (params.expiresAt) {
+    const expiresAt = new Date(params.expiresAt);
+    if (!Number.isNaN(expiresAt.getTime()) && expiresAt.getTime() <= Date.now()) {
+      return "expired";
+    }
+  }
+
+  return "active";
+}
+
+function parseEntitlement(params: {
+  raw: unknown;
+  bodyEnvironment: unknown;
+  index: number;
+}): { valid: true; parsed: {
+  entitlement: MirroredEntitlement;
+  environment: MirrorEnvironment;
+  environmentSource: string;
+}; } | {
   valid: false;
   response: Response;
 } {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+  if (!params.raw || typeof params.raw !== "object" || Array.isArray(params.raw)) {
     return {
       valid: false,
       response: errorResponse("invalid_request", "Each entitlement must be a JSON object", 400, false),
     };
   }
 
-  const data = raw as Record<string, unknown>;
-
-  const originalTransactionId = readRequiredString(data.original_transaction_id);
-  if (!originalTransactionId) {
-    return {
-      valid: false,
-      response: errorResponse(
-        "invalid_request",
-        "entitlements[].original_transaction_id is required",
-        400,
-        false,
-      ),
-    };
-  }
+  const data = params.raw as Record<string, unknown>;
+  const prefix = "entitlements[" + params.index + "]";
 
   const productId = readRequiredString(data.product_id);
   if (!productId) {
     return {
       valid: false,
-      response: errorResponse("invalid_request", "entitlements[].product_id is required", 400, false),
+      response: errorResponse("invalid_request", prefix + ".product_id is required", 400, false),
     };
   }
 
-  const status = normalizeSubscriptionStatus(data.status);
-  if (!status) {
+  const transactionId = readRequiredString(data.transaction_id);
+  if (!transactionId) {
     return {
       valid: false,
-      response: errorResponse(
-        "invalid_request",
-        "entitlements[].status must be one of: trialing, active, grace_period, expired, canceled, refunded",
-        400,
-        false,
-      ),
+      response: errorResponse("invalid_request", prefix + ".transaction_id is required", 400, false),
     };
   }
 
-  const transactionId = readOptionalString(data.transaction_id, "entitlements[].transaction_id");
-  if (!transactionId.ok) {
+  const originalTransactionId = readOptionalString(
+    data.original_transaction_id,
+    prefix + ".original_transaction_id",
+  );
+  if (!originalTransactionId.ok) {
     return {
       valid: false,
-      response: errorResponse("invalid_request", transactionId.message, 400, false),
+      response: errorResponse("invalid_request", originalTransactionId.message, 400, false),
     };
   }
 
-  const currentPeriodStart = readOptionalIso(data.current_period_start, "entitlements[].current_period_start");
-  if (!currentPeriodStart.ok) {
+  const resolvedEnvironment = resolveMirrorEnvironment({
+    primaryValue: data.environment,
+    primarySource: prefix + ".environment",
+    fallbackValue: params.bodyEnvironment,
+  });
+  if (!resolvedEnvironment.ok) {
     return {
       valid: false,
-      response: errorResponse("invalid_request", currentPeriodStart.message, 400, false),
+      response: resolvedEnvironment.response,
     };
   }
 
-  const currentPeriodEnd = readOptionalIso(data.current_period_end, "entitlements[].current_period_end");
-  if (!currentPeriodEnd.ok) {
+  const purchasedAt = readRequiredIso(data.purchased_at, prefix + ".purchased_at");
+  if (!purchasedAt.ok) {
     return {
       valid: false,
-      response: errorResponse("invalid_request", currentPeriodEnd.message, 400, false),
+      response: errorResponse("invalid_request", purchasedAt.message, 400, false),
     };
   }
 
-  const trialStartedAt = readOptionalIso(data.trial_started_at, "entitlements[].trial_started_at");
-  if (!trialStartedAt.ok) {
+  const expiresAt = readOptionalIso(data.expires_at, prefix + ".expires_at");
+  if (!expiresAt.ok) {
     return {
       valid: false,
-      response: errorResponse("invalid_request", trialStartedAt.message, 400, false),
+      response: errorResponse("invalid_request", expiresAt.message, 400, false),
     };
   }
 
-  const trialEndsAt = readOptionalIso(data.trial_ends_at, "entitlements[].trial_ends_at");
-  if (!trialEndsAt.ok) {
+  const revocationDate = readOptionalIso(data.revocation_date, prefix + ".revocation_date");
+  if (!revocationDate.ok) {
     return {
       valid: false,
-      response: errorResponse("invalid_request", trialEndsAt.message, 400, false),
+      response: errorResponse("invalid_request", revocationDate.message, 400, false),
     };
   }
 
-  const cancelAt = readOptionalIso(data.cancel_at, "entitlements[].cancel_at");
-  if (!cancelAt.ok) {
-    return {
-      valid: false,
-      response: errorResponse("invalid_request", cancelAt.message, 400, false),
-    };
-  }
-
-  const canceledAt = readOptionalIso(data.canceled_at, "entitlements[].canceled_at");
-  if (!canceledAt.ok) {
-    return {
-      valid: false,
-      response: errorResponse("invalid_request", canceledAt.message, 400, false),
-    };
-  }
-
-  const ownershipType = readOptionalString(data.ownership_type, "entitlements[].ownership_type");
+  const ownershipType = readOptionalString(data.ownership_type, prefix + ".ownership_type");
   if (!ownershipType.ok) {
     return {
       valid: false,
@@ -344,7 +448,39 @@ function parseEntitlement(raw: unknown): { valid: true; entitlement: MirroredEnt
     };
   }
 
-  const willAutoRenew = readOptionalBoolean(data.will_auto_renew, "entitlements[].will_auto_renew");
+  const entitlementStatus = readOptionalString(data.entitlement_status, prefix + ".entitlement_status");
+  if (!entitlementStatus.ok) {
+    return {
+      valid: false,
+      response: errorResponse("invalid_request", entitlementStatus.message, 400, false),
+    };
+  }
+
+  const storekitStatus = readOptionalString(data.storekit_status, prefix + ".storekit_status");
+  if (!storekitStatus.ok) {
+    return {
+      valid: false,
+      response: errorResponse("invalid_request", storekitStatus.message, 400, false),
+    };
+  }
+
+  const source = readOptionalString(data.source, prefix + ".source");
+  if (!source.ok) {
+    return {
+      valid: false,
+      response: errorResponse("invalid_request", source.message, 400, false),
+    };
+  }
+
+  const platform = readOptionalString(data.platform, prefix + ".platform");
+  if (!platform.ok) {
+    return {
+      valid: false,
+      response: errorResponse("invalid_request", platform.message, 400, false),
+    };
+  }
+
+  const willAutoRenew = readOptionalBoolean(data.will_auto_renew, prefix + ".will_auto_renew");
   if (!willAutoRenew.ok) {
     return {
       valid: false,
@@ -354,7 +490,7 @@ function parseEntitlement(raw: unknown): { valid: true; entitlement: MirroredEnt
 
   const introOffer = readOptionalBoolean(
     data.is_in_intro_offer_period,
-    "entitlements[].is_in_intro_offer_period",
+    prefix + ".is_in_intro_offer_period",
   );
   if (!introOffer.ok) {
     return {
@@ -363,25 +499,48 @@ function parseEntitlement(raw: unknown): { valid: true; entitlement: MirroredEnt
     };
   }
 
-  const metadata = sanitizeMetadata(data.metadata);
+  const normalizedStatus =
+    normalizeIncomingStatus(entitlementStatus.value) ??
+    normalizeIncomingStatus(storekitStatus.value) ??
+    normalizeIncomingStatus(data.status) ??
+    deriveFallbackStatus({
+      expiresAt: expiresAt.value,
+      revocationDate: revocationDate.value,
+    });
+
+  const metadata: Record<string, unknown> = {
+    environment: resolvedEnvironment.environment,
+    environment_source: resolvedEnvironment.source,
+    purchased_at: purchasedAt.value,
+    expires_at: expiresAt.value,
+    revocation_date: revocationDate.value,
+    entitlement_status: entitlementStatus.value,
+    storekit_status: storekitStatus.value,
+    source: source.value,
+    platform: platform.value,
+  };
 
   return {
     valid: true,
-    entitlement: {
-      original_transaction_id: originalTransactionId,
-      transaction_id: transactionId.value,
-      product_id: productId,
-      status,
-      current_period_start: currentPeriodStart.value,
-      current_period_end: currentPeriodEnd.value,
-      trial_started_at: trialStartedAt.value,
-      trial_ends_at: trialEndsAt.value,
-      cancel_at: cancelAt.value,
-      canceled_at: canceledAt.value,
-      ownership_type: ownershipType.value,
-      will_auto_renew: willAutoRenew.value,
-      is_in_intro_offer_period: introOffer.value,
-      metadata,
+    parsed: {
+      environment: resolvedEnvironment.environment,
+      environmentSource: resolvedEnvironment.source,
+      entitlement: {
+        original_transaction_id: originalTransactionId.value ?? transactionId,
+        transaction_id: transactionId,
+        product_id: productId,
+        status: normalizedStatus,
+        current_period_start: purchasedAt.value,
+        current_period_end: expiresAt.value,
+        trial_started_at: normalizedStatus === "trialing" ? purchasedAt.value : null,
+        trial_ends_at: normalizedStatus === "trialing" ? expiresAt.value : null,
+        cancel_at: revocationDate.value,
+        canceled_at: revocationDate.value,
+        ownership_type: ownershipType.value,
+        will_auto_renew: willAutoRenew.value,
+        is_in_intro_offer_period: introOffer.value,
+        metadata,
+      },
     },
   };
 }
@@ -389,8 +548,11 @@ function parseEntitlement(raw: unknown): { valid: true; entitlement: MirroredEnt
 function parseRequestBody(raw: unknown): { valid: true; parsed: {
   mode: MirrorVerificationMode;
   environment: MirrorEnvironment;
-  entitlements: MirroredEntitlement[];
-  metadata: Record<string, unknown>;
+  entitlements: Array<{
+    entitlement: MirroredEntitlement;
+    environment: MirrorEnvironment;
+    environment_source: string;
+  }>;
 }; } | { valid: false; response: Response } {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
     return {
@@ -408,32 +570,6 @@ function parseRequestBody(raw: unknown): { valid: true; parsed: {
       response: errorResponse(
         "invalid_request",
         "verification_mode must be ios_verified_mirror for TestFlight mirroring",
-        400,
-        false,
-      ),
-    };
-  }
-
-  const environmentRaw = typeof body.environment === "string" ? body.environment.trim().toLowerCase() : null;
-  if (environmentRaw === "production") {
-    return {
-      valid: false,
-      response: errorResponse(
-        "invalid_request",
-        "production environment mirroring is disabled until server-side Apple validation is implemented",
-        400,
-        false,
-      ),
-    };
-  }
-
-  const environment = normalizeMirrorEnvironment(body.environment);
-  if (!environment) {
-    return {
-      valid: false,
-      response: errorResponse(
-        "invalid_request",
-        "environment must be one of: xcode, sandbox, testflight",
         400,
         false,
       ),
@@ -459,30 +595,76 @@ function parseRequestBody(raw: unknown): { valid: true; parsed: {
     };
   }
 
-  const entitlements: MirroredEntitlement[] = [];
-  for (const rawEntitlement of body.entitlements) {
-    const parsed = parseEntitlement(rawEntitlement);
+  const parsedEntitlements: Array<{
+    entitlement: MirroredEntitlement;
+    environment: MirrorEnvironment;
+    environment_source: string;
+  }> = [];
+
+  for (let i = 0; i < body.entitlements.length; i += 1) {
+    const parsed = parseEntitlement({
+      raw: body.entitlements[i],
+      bodyEnvironment: body.environment,
+      index: i,
+    });
     if (!parsed.valid) {
       return parsed;
     }
 
-    entitlements.push(parsed.entitlement);
+    parsedEntitlements.push({
+      entitlement: parsed.parsed.entitlement,
+      environment: parsed.parsed.environment,
+      environment_source: parsed.parsed.environmentSource,
+    });
   }
 
-  const deduplicated = new Map<string, MirroredEntitlement>();
-  for (const entitlement of entitlements) {
-    deduplicated.set(entitlement.original_transaction_id, entitlement);
+  const deduplicated = new Map<string, {
+    entitlement: MirroredEntitlement;
+    environment: MirrorEnvironment;
+    environment_source: string;
+  }>();
+  for (const parsed of parsedEntitlements) {
+    deduplicated.set(parsed.entitlement.original_transaction_id, parsed);
   }
 
-  const metadata = sanitizeMetadata(body.metadata);
+  const deduplicatedValues = [...deduplicated.values()];
+
+  let responseEnvironment: MirrorEnvironment;
+  if (deduplicatedValues.length === 0) {
+    const fallbackEnvironment = resolveMirrorEnvironment({
+      primaryValue: undefined,
+      primarySource: "entitlements[].environment",
+      fallbackValue: body.environment,
+    });
+    if (!fallbackEnvironment.ok) {
+      return {
+        valid: false,
+        response: fallbackEnvironment.response,
+      };
+    }
+    responseEnvironment = fallbackEnvironment.environment;
+  } else {
+    responseEnvironment = deduplicatedValues[0].environment;
+    const hasMixedEnvironments = deduplicatedValues.some((entry) => entry.environment !== responseEnvironment);
+    if (hasMixedEnvironments) {
+      return {
+        valid: false,
+        response: errorResponse(
+          "invalid_request",
+          "All entitlements in one request must use the same environment",
+          400,
+          false,
+        ),
+      };
+    }
+  }
 
   return {
     valid: true,
     parsed: {
       mode,
-      environment,
-      entitlements: [...deduplicated.values()],
-      metadata,
+      environment: responseEnvironment,
+      entitlements: deduplicatedValues,
     },
   };
 }
@@ -533,10 +715,9 @@ async function upsertMirroredSubscription(params: {
   mode: MirrorVerificationMode;
   environment: MirrorEnvironment;
   entitlement: MirroredEntitlement;
-  requestMetadata: Record<string, unknown>;
 }): Promise<{ row: SubscriptionRow; eventType: SubscriptionEventType }> {
   const nowIso = new Date().toISOString();
-  const { userClient, userId, mode, environment, entitlement, requestMetadata } = params;
+  const { userClient, userId, mode, environment, entitlement } = params;
 
   const { data: existing, error: existingError } = await userClient
     .from("subscriptions")
@@ -558,7 +739,6 @@ async function upsertMirroredSubscription(params: {
     ownership_type: entitlement.ownership_type,
     will_auto_renew: entitlement.will_auto_renew,
     is_in_intro_offer_period: entitlement.is_in_intro_offer_period,
-    ...sanitizeMetadata(requestMetadata),
     ...sanitizeMetadata(entitlement.metadata),
   };
 
@@ -640,8 +820,14 @@ async function upsertMirroredSubscription(params: {
     original_transaction_id: row.original_transaction_id,
     transaction_id: entitlement.transaction_id,
     mirrored_at: nowIso,
-    ...sanitizeMetadata(requestMetadata),
-    ...sanitizeMetadata(entitlement.metadata),
+    ownership_type: entitlement.ownership_type,
+    purchased_at: entitlement.current_period_start,
+    expires_at: entitlement.current_period_end,
+    revoked_at: entitlement.canceled_at,
+    entitlement_status: entitlement.metadata?.entitlement_status ?? null,
+    storekit_status: entitlement.metadata?.storekit_status ?? null,
+    source: entitlement.metadata?.source ?? null,
+    platform: entitlement.metadata?.platform ?? null,
   };
 
   const { error: eventError } = await userClient.from("subscription_events").insert({
@@ -691,14 +877,13 @@ Deno.serve(async (req) => {
     // using signed transactions and App Store Server API before public release.
     const mirroredRows: Array<{ row: SubscriptionRow; eventType: SubscriptionEventType }> = [];
 
-    for (const entitlement of parsedRequest.parsed.entitlements) {
+    for (const entitlementEntry of parsedRequest.parsed.entitlements) {
       const mirrored = await upsertMirroredSubscription({
         userClient: authResult.userClient,
         userId: authResult.user.id,
         mode: parsedRequest.parsed.mode,
-        environment: parsedRequest.parsed.environment,
-        entitlement,
-        requestMetadata: parsedRequest.parsed.metadata,
+        environment: entitlementEntry.environment,
+        entitlement: entitlementEntry.entitlement,
       });
 
       mirroredRows.push(mirrored);
