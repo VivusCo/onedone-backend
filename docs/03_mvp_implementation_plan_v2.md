@@ -1,10 +1,8 @@
 # OneDone — MVP Implementation Plan v2
 
-## Goal
+This file is now a status-oriented MVP plan snapshot.
 
-Build the first realistic version of OneDone without overloading development.
-
-## Final access strategy
+## 1. Product Loop (Current MVP)
 
 ```txt
 Open app
@@ -12,82 +10,81 @@ Open app
 → Onboarding
 → 3-day Starter Access
 → App Store 14-day trial gate
-→ Paid subscription
+→ Paid subscription state
 ```
 
-## Starter Access
+## 2. Implemented MVP Baseline
 
-Starter Access gives real, limited-time product access.
+### iOS runtime and architecture (implemented)
+- Remote backend runtime is the default for real usage.
+- Mock mode remains for SwiftUI previews/development fallback only.
+- Supabase Auth email/password is implemented via REST + URLSession.
+- Session restore and logout are implemented with Keychain-backed session storage.
+- Authenticated API calls use `AuthTokenProvider`.
+- Backend access-state drives routing.
 
-- Not called a trial in UI.
-- Not an App Store trial.
-- Backend-controlled.
-- Limited by fair-use rules.
+### Core flows (implemented)
+- Onboarding completion -> `POST /complete-onboarding`.
+- AI loop:
+  - `POST /analyze-task`
+  - `POST /answer-clarification`
+  - `POST /generate-reply`
+- Task actions:
+  - `POST /update-task-status`
+  - `POST /message-marked-sent`
+- Task reads:
+  - `GET /list-tasks`
+  - `GET /get-task-detail`
+  - `GET /get-task-outputs`
+  - `GET /get-task-events`
+  - `GET /get-checklist-items`
+  - `GET /get-reminders`
+- Reminder actions:
+  - `POST /reminder-create`
+  - `POST /reminder-update`
+  - `POST /reminder-cancel`
+  - `POST /reminder-snooze`
 
-Recommended copy:
+### Subscription access (implemented MVP scaffold)
+- StoreKit 2 purchase/restore flow exists on iOS.
+- Local StoreKit config exists for development testing.
+- Backend endpoints connected:
+  - `POST /validate-subscription`
+  - `POST /restore-purchases`
+- Current verification mode: `ios_verified_mirror`.
 
-> Your first 3 days are open.
+## 3. MVP Limitations That Stay Explicit
 
-Subtext:
+- Attachments/OCR are deferred (coming soon).
+- No autonomous external actions.
+- iOS never calls OpenAI directly.
+- iOS must never contain Supabase `service_role` key.
+- OpenAI key exists only in Supabase secrets.
 
-> Try OneDone with real tasks. After 3 days, start your 14-day App Store trial to keep going.
+## 4. Remaining Release Setup (Not Yet Complete)
 
-## First TestFlight must-have
+### TestFlight readiness items
+- Verify hosted Supabase deployment (functions + migrations + RLS) is in sync with local MVP behavior.
+- Validate subscription mirror behavior with `xcode`, `sandbox`, and `testflight` entitlement environments.
+- Resolve/define email confirmation production policy and messaging.
+- Confirm production deep-link and auth redirect setup.
+- Execute full manual QA pass for auth/access/task/reminder/subscription flows.
 
-### iOS
+### Public release hardening items
+- Add full Apple Server API validation path for subscriptions.
+- Add App Store Server Notifications backend flow.
+- Finalize Sign in with Apple decision and implementation if required before broader/public release.
 
-- Sign in with Apple.
-- Onboarding.
-- Starter Access activation after onboarding.
-- Starter Access indicator.
-- Starter expired gate to App Store trial.
-- StoreKit 2 trial purchase flow.
-- Home screen.
-- New Task text input.
-- Clarification Screen.
-- Task Result Screen.
-- Task Detail simplified.
-- My Tasks simplified.
-- Draft Reply screen.
-- Reminder creation with local notifications.
-- Settings with access/subscription status and restore purchases.
-- Limited mode after Starter/Trial/Subscription expiry.
+## 5. Milestone Status
 
-### Backend
+### Completed
+1. Clickable UI and mock-safe fallback.
+2. Supabase auth and backend skeleton.
+3. Remote AI task loop integration.
+4. StoreKit purchase/restore + backend subscription mirror scaffold.
+5. Follow-through flows (task actions, reminders, task read APIs).
 
-- Supabase Auth.
-- Profile creation.
-- Complete onboarding endpoint.
-- Starter Access fields and access logic.
-- StoreKit validation/mirroring for App Store trial.
-- Access state endpoint.
-- Tasks table.
-- Task outputs table.
-- Task events table.
-- Clarifications table.
-- Checklist items table.
-- Reminders table.
-- Usage events.
-- Analyze task Edge Function.
-- Answer clarification Edge Function.
-- Generate reply Edge Function.
-- Reminder CRUD.
-- Update task status.
-- RLS policies.
-
-### First templates
-
-1. cancel_subscription
-2. request_refund
-3. return_item
-4. understand_bill
-5. reply_to_message
-
-## Milestones
-
-1. Clickable UI / mock data
-2. Supabase skeleton
-3. AI task loop
-4. StoreKit trial
-5. Follow-through
-6. Public release readiness
+### In progress / remaining
+1. TestFlight hardening and environment setup verification.
+2. Public-release subscription infrastructure (Apple server validation + notifications).
+3. Deferred scope planning (attachments/OCR and related UX).
